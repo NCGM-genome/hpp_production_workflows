@@ -1,7 +1,7 @@
 version 1.0
 
 workflow renameContigsAddMT_wf {
-    
+
     meta {
         author: "Julian Lucas"
         email: "juklucas@ucsc.edu"
@@ -16,7 +16,7 @@ workflow renameContigsAddMT_wf {
         t2t_sequences: "Sequence IDs which represent an chromsome T2T. Must have header and column 1 is sequence IDs, column 4 is chromosome assignment formatted as chr1, for example"
         mitoAssembly: "Unzipped fasta assembly of mitochondrion."
     }
-    
+
     input {
         String sampleName
         String outputFileTag
@@ -72,7 +72,7 @@ task renameContigsAddMT {
         set -u
         set -o xtrace
 
-        ## gunzip input fasta 
+        ## gunzip input fasta
         gunzip -c ~{inputFastaGZ} > ~{unzippedOrigFa}
 
         ## Check if we have a mito assembly (not all samples do). If so, add it to maternal haplotype
@@ -86,7 +86,7 @@ task renameContigsAddMT {
                 ## Rename just the mito contig (Genbank requires that it is labeled)
                 # For example:   ">ptg000005l_rotated ptg000005l"
                 ## Sould become: ">ptg000005l_rotated [location=mitochondrion]"
-                sed 's/^\(>[^ ]*\).*/\1 [location=mitochondrion]/' ~{mitoAssembly} > renamed_mito.fasta 
+                sed 's/^\(>[^ ]*\).*/\1 [location=mitochondrion]/' ~{mitoAssembly} > renamed_mito.fasta
 
                 ## Add renamed mito contig to original assembly
                 cat ~{unzippedOrigFa} renamed_mito.fasta > mito_added.fasta
@@ -96,7 +96,7 @@ task renameContigsAddMT {
         else
             ## There is no mito assembly, just link the file
             ln -s ~{unzippedOrigFa} mito_added.fasta
-        fi 
+        fi
 
 
         ## annotate fasta header so sequences that represent an entire chromosome are
@@ -116,11 +116,14 @@ task renameContigsAddMT {
             > contig_to_chrom_map.txt
 
         ## Now actually replace the fasta headers...
-        seqkit replace -p '(.+)' -r '$1 {kv}' -k mapping.txt \
-            mito_added.fasta \
-            --kv-file contig_to_chrom_map.txt \
-            > mito_added_renamed_header.fasta
-        
+        if [ -s contig_to_chrom_map.txt ]; then
+          seqkit replace -p '(.+)' -r '$1 {kv}' \
+              mito_added.fasta \
+              --kv-file contig_to_chrom_map.txt \
+              > mito_added_renamed_header.fasta
+        else
+          ln -s mito_added.fasta mito_added_renamed_header.fasta
+        fi
 
         ## Rename contig names to sampleName#1/2#contigName format (1 = paternal, 2 = maternal)
         sed "s/^>/>~{sampleName}\#~{haplotype}\#/" mito_added_renamed_header.fasta \
@@ -143,7 +146,7 @@ task renameContigsAddMT {
     }
 
     runtime {
-        cpu: threadCount        
+        cpu: threadCount
         memory: memSizeGB + " GB"
         disks: "local-disk " + diskSizeGB + " SSD"
         docker: dockerImage
