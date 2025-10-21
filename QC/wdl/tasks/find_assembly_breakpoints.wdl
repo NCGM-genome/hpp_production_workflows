@@ -68,7 +68,7 @@ workflow findAssemblyBreakpoints{
             edges=generateAssemblyEdges.edges,
             preemptible=preemptible
     }
-    
+
     call combineIntoFasta {
         input:
             assembly_name=assembly_name,
@@ -76,7 +76,7 @@ workflow findAssemblyBreakpoints{
             edges=generateAssemblyEdges.edges,
             preemptible=preemptible
     }
-    
+
     call runNCRF {
         input:
             edgesFasta=combineIntoFasta.edgesFasta,
@@ -274,7 +274,7 @@ task unifyAssembly {
         seqtk seq -r contigsToBeReverseComplemented.tmp >contigsToBeReverseComplemented.fa
         rm contigsToBeReverseComplemented.tmp
         seqtk subseq ~{assembly} ~{contigsToBeKeptAsIs} >contigsToBeKeptAsIs.fa
-        
+
         cat contigsToBeReverseComplemented.fa contigsToBeKeptAsIs.fa >~{assembly_name}.unifiedAssembly.fa
 
     >>>
@@ -321,7 +321,7 @@ task mapToCHM13 {
     runtime {
         memory: memSizeGB + " GB"
         cpu: threadCount
-        preemptible : preemptible 
+        preemptible : preemptible
         docker: "quay.io/biocontainers/mashmap:2.0--h543ed2d_4"
     }
 }
@@ -343,17 +343,17 @@ task generateAssemblyEdges {
         set -u
         set -o xtrace
 
-        bases=1000; 
+        bases=1000;
         #extract first and last bases from each fasta entry
-        
+
         #extract bases from the start and end of each entry in fasta
         cat ~{assembly} | gawk -v len="$bases" -F "" '{if (NR % 2 == 0) {for (i=1; i<=NF; i++) {if (i <= len || (NF-i) < len) {printf $(i)}}; printf "\n"}}' >~{assembly_name}.edges.tmp.txt
-        
+
         #split start and end into two rows
         cat ~{assembly_name}.edges.tmp.txt | sed -e "s/.\{$bases\}/&\n/g" | sed '/^$/d' >~{assembly_name}.edges.txt
         #rm ~{assembly_name}.edges.tmp.txt
 
-        
+
     >>>
 
     output {
@@ -395,7 +395,7 @@ task runBioawk {
         bioawk -c fastx '{ print $name, length($seq) }' < ~{assembly} >~{assembly_name}.lengths.txt
 
 
-        
+
     >>>
 
     output {
@@ -429,7 +429,7 @@ task combineIntoFasta {
 
         #combine extracted sequences with headers to create .fasta file
         paste -d '\n' ~{headers} ~{edges} > ~{assembly_name}.combined.fasta
-        
+
     >>>
 
     output {
@@ -463,7 +463,7 @@ task runNCRF {
     #search this fasta for the telomeric repeat
     cat ~{edgesFasta} | NCRF --stats=events TTAGGG --minlength=~{telomericMinLength} | ncrf_summary >~{assembly_name}.telomeric.summary.txt
     cat ~{assembly_name}.telomeric.summary.txt | tail -n +2 | cut -f3 | sort | uniq >~{assembly_name}.telomeric.ends.txt
-        
+
     >>>
 
     output {
@@ -489,19 +489,19 @@ task createAssemblyStatistics {
         args <- commandArgs(trailingOnly = TRUE)
         filename<-args[1]
 
-        mashmap<-as.data.frame(read.table(filename))
+        mashmap<-as.data.frame(read.table(filename, comment.char = ""))
         colnames(mashmap)<-c("contig","contig_length","cstart","cend","strand","chr","chr_length","chstart","chend","identity")
         coef<-1000000
 
         library("dplyr")
 
         #generate useful statistics about the assembly, e.g. how many Mbs of sequence were assembled
-        filtered_mashmap<-mashmap %>% 
+        filtered_mashmap<-mashmap %>%
             mutate(chm13_length = chend - chstart) %>%
             mutate(assembly_length = cend - cstart) %>%
-            group_by(chr) %>% 
-            summarise(reference_alignment_Mb = sum(chm13_length)/coef, 
-            assembly_alignment_Mb = sum(assembly_length)/coef, 
+            group_by(chr) %>%
+            summarise(reference_alignment_Mb = sum(chm13_length)/coef,
+            assembly_alignment_Mb = sum(assembly_length)/coef,
             chromosome_length_Mb=max(chr_length)/coef,
             largest_assembled_sequence_Mb=max(assembly_length)/coef)%>%
             arrange(chr,.by_group=TRUE)
@@ -556,15 +556,15 @@ task assessCompletness {
     else
         echo "None of the contigs/scaffolds contained telomeres on both ends."
     fi
-    
-    echo "Done."    
+
+    echo "Done."
     >>>
 
     output {
         File scaffolds = "${assembly_name}.T2T.scaffolds.txt"
         File contigs = "${assembly_name}.T2T.contigs.txt"
     }
-    
+
     runtime {
         memory: memSizeGB + " GB"
         preemptible : preemptible
@@ -625,12 +625,12 @@ task evaluate {
     #EXCLUDE COMPLETE CHROMOSOMES
     cat ~{mashmap} | sort -k6,6 -k8,8 -V -s >~{assembly_name}.mashmap.txt       #coordinates in the reference/CHM13
     cat ~{scaffolds} | cut -f4 >~{assembly_name}.complete_chromosomes.lst           #list of complete chromosomes that should be exluded from the breakpoint analysis
-    
+
     #create bed file from the mashmap alignment
     awk '{print $6 "\t" $8 "\t" $9 "\t" $1}' ~{mashmap} | sort -k1,1 -k2,2n -V -s >~{assembly_name}.tmp.bed     #create sorted bed file
     grep -w -v -f ~{assembly_name}.complete_chromosomes.lst ~{assembly_name}.tmp.bed >~{assembly_name}.bed || true         #exclude complete chromosomes/scaffolds
 
-   
+
     >>>
 
     output {
@@ -666,7 +666,7 @@ task createBedFiles {
     #1kb on each side of the breakpoint
     bedtools flank -i ~{assemblyBed} -g ~{genomeFile} -l ~{flankLength} -r 0 >~{assembly_name}.flanks.start.bed
     bedtools flank -i ~{assemblyBed} -g ~{genomeFile} -l 0 -r ~{flankLength} >~{assembly_name}.flanks.end.bed
-    
+
     >>>
 
     output {
@@ -722,9 +722,9 @@ task filterFlanks {
 
     cat ~{assembly_name}.NOstarts.bed ~{assembly_name}.NOends.bed >~{assembly_name}.filteredFlanks.bed
 
-    #if the filtering below is not performed, some of the flanks will be potentially as short as 1bp 
+    #if the filtering below is not performed, some of the flanks will be potentially as short as 1bp
     #awk '{if (($3-$2)==~{flankLength}) print;}' ~{assembly_name}.merged.bed >~{assembly_name}.filteredFlanks.bed
-    
+
     >>>
 
     output {
@@ -761,7 +761,7 @@ task intersectBed {
     echo -e "~{assembly_name}""\t""annotation" >~{assembly_name}.region.breakAnnotation.txt
     echo -e "~{assembly_name}""\t""annotation" >~{assembly_name}.SD.breakAnnotation.txt
     echo -e "~{assembly_name}""\t""annotation" >~{assembly_name}.CENSAT.breakAnnotation.txt
-    
+
     bedtools intersect -a ~{assemblyBed} -b ~{annotationBed} -loj | cut -f8 | sort | uniq -c | sed 's/^ *//g' | sed 's/ /\t/g' >>~{assembly_name}.region.breakAnnotation.txt
     bedtools intersect -a ~{assemblyBed} -b ~{annotationSD} -loj | cut -f8 | sort | uniq -c | sed 's/^ *//g' | sed 's/ /\t/g' >>~{assembly_name}.SD.breakAnnotation.txt
     bedtools intersect -a ~{assemblyBed} -b ~{annotationCENSAT} -loj | cut -f8 | sort | uniq -c | sed 's/^ *//g' | sed 's/ /\t/g' >>~{assembly_name}.CENSAT.breakAnnotation.txt
@@ -770,7 +770,7 @@ task intersectBed {
     echo -e "#chr""\t""start""\t""end""\t""annotation" >~{assembly_name}.region.breakAnnotation.bed
     echo -e "#chr""\t""start""\t""end""\t""annotation" >~{assembly_name}.region.breakAnnotation.bed
     echo -e "#chr""\t""start""\t""end""\t""annotation" >~{assembly_name}.region.breakAnnotation.bed
-    
+
     bedtools intersect -a ~{assemblyBed} -b ~{annotationBed} -loj | awk '{print $1 "\t" $2 "\t" $3 "\t" $8}' | sort -k1,1 -k2,2n -V -s >>~{assembly_name}.region.breakAnnotation.bed
     bedtools intersect -a ~{assemblyBed} -b ~{annotationSD} -loj | awk '{print $1 "\t" $2 "\t" $3 "\t" $8}' | sort -k1,1 -k2,2n -V -s >>~{assembly_name}.SD.breakAnnotation.bed
     bedtools intersect -a ~{assemblyBed} -b ~{annotationCENSAT} -loj | awk '{print $1 "\t" $2 "\t" $3 "\t" $8}' | sort -k1,1 -k2,2n -V -s >>~{assembly_name}.CENSAT.breakAnnotation.bed
@@ -815,7 +815,7 @@ task formatBreakAnnotation {
     cat ~{breakAnnotation_region} | datamash reverse | datamash transpose --filler NA >>~{assembly_name}.formattedBreakAnnotation_region.txt
     cat ~{breakAnnotation_SD} | datamash reverse | datamash transpose --filler NA >>~{assembly_name}.formattedBreakAnnotation_SD.txt
     cat ~{breakAnnotation_CENSAT} | datamash reverse | datamash transpose --filler NA >>~{assembly_name}.formattedBreakAnnotation_CENSAT.txt
-    
+
     >>>
 
     output {
@@ -830,4 +830,3 @@ task formatBreakAnnotation {
         docker: "quay.io/biocontainers/datamash:1.1.0--0"
     }
 }
-
