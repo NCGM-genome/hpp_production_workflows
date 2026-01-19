@@ -44,7 +44,7 @@ workflow runTrioHifiasm{
                 input:
                     readFastqGz = childReadsHiFiExtractedGz.extractedRead,
                     diskSizeGB = fileExtractionDiskSizeGB
-            } 
+            }
         }
         File hifiProcessedFastqGz = select_first([filterAdapterHiFi.filteredReadFastqGz, childReadsHiFiExtractedGz.extractedRead])
     }
@@ -65,7 +65,7 @@ workflow runTrioHifiasm{
                     diskSizeGB=fileExtractionDiskSizeGB,
                     dockerImage=dockerImage
             }
-            
+
             # filter ONT reads for quality
             if (defined(min_ont_qscore)) {
                 call seqkit_filter_wf.filter_fastq as qscore_filter_ont {
@@ -81,7 +81,7 @@ workflow runTrioHifiasm{
          Float ul_size_all = size(ont_reads, 'GB')
     }
     # if no ONT data is provided then it would be zero
-    Float readULSize = select_first([ul_size_all, 0])    
+    Float readULSize = select_first([ul_size_all, 0])
 
     call trioHifiasm as hifiasmStep1{
         input:
@@ -96,53 +96,76 @@ workflow runTrioHifiasm{
             dockerImage=dockerImage,
             zones = zones
     }
-    call trioHifiasm as hifiasmStep2{
-        input:
-            childReadsUL=ont_reads, 
-            paternalYak=paternalYak,
-            maternalYak=maternalYak,
-            homCov = homCov,
-            minOntReadLength = minOntReadLength,
-            childID=childID,
-            extraOptions="--bin-only --telo-m CCCTAA",
-            inputBinFilesTarGz=hifiasmStep1.outputBinFiles,
-            memSizeGB=ceil(memCovRatios[1] * select_first([homCov, 0]) + offsetMem[1]),
-            threadCount=threadCount,
-            diskSizeGB= floor((childReadHiFiSize + readULSize) * 2.5) + 128,
-            preemptible=preemptible,
-            dockerImage=dockerImage,
-            zones = zones
+    # If ONT (ultralong) reads are provided, run step2 and step3.
+    # If not, skip them and run step4 directly using step1's bin files.
+    if (length(childReadsONT) != 0) {
+        call trioHifiasm as hifiasmStep2{
+            input:
+                childReadsUL=ont_reads,
+                paternalYak=paternalYak,
+                maternalYak=maternalYak,
+                homCov = homCov,
+                minOntReadLength = minOntReadLength,
+                childID=childID,
+                extraOptions="--bin-only --telo-m CCCTAA",
+                inputBinFilesTarGz=hifiasmStep1.outputBinFiles,
+                memSizeGB=ceil(memCovRatios[1] * select_first([homCov, 0]) + offsetMem[1]),
+                threadCount=threadCount,
+                diskSizeGB= floor((childReadHiFiSize + readULSize) * 2.5) + 128,
+                preemptible=preemptible,
+                dockerImage=dockerImage,
+                zones = zones
+        }
+        call trioHifiasm as hifiasmStep3{
+            input:
+                childReadsUL=ont_reads,
+                homCov = homCov,
+                minOntReadLength = minOntReadLength,
+                childID=childID,
+                extraOptions="--telo-m CCCTAA",
+                inputBinFilesTarGz=hifiasmStep2.outputBinFiles,
+                memSizeGB=ceil(memCovRatios[2] * select_first([homCov, 0]) + offsetMem[2]),
+                threadCount=threadCount,
+                diskSizeGB= floor((childReadHiFiSize + readULSize) * 2.5) + 128,
+                preemptible=preemptible,
+                dockerImage=dockerImage,
+                zones = zones
+        }
     }
-    call trioHifiasm as hifiasmStep3{
-        input:
-            childReadsUL=ont_reads,
-            homCov = homCov,
-            minOntReadLength = minOntReadLength,
-            childID=childID,
-            extraOptions="--telo-m CCCTAA",
-            inputBinFilesTarGz=hifiasmStep2.outputBinFiles,
-            memSizeGB=ceil(memCovRatios[2] * select_first([homCov, 0]) + offsetMem[2]),
-            threadCount=threadCount,
-            diskSizeGB= floor((childReadHiFiSize + readULSize) * 2.5) + 128,
-            preemptible=preemptible,
-            dockerImage=dockerImage,
-            zones = zones
+
+    # ONT reads are NOT provided -> skip step2/3 and run step4
+    if (length(childReadsONT) == 0) {
+        call trioHifiasm as hifiasmStep4{
+            input:
+                paternalYak=paternalYak,
+                maternalYak=maternalYak,
+                homCov = homCov,
+                childID=childID,
+                extraOptions="--telo-m CCCTAA",
+                inputBinFilesTarGz=hifiasmStep1.outputBinFiles,
+                memSizeGB=ceil(memCovRatios[1] * select_first([homCov, 0]) + offsetMem[1]),
+                threadCount=threadCount,
+                diskSizeGB= floor((childReadHiFiSize + readULSize) * 2.5) + 128,
+                preemptible=preemptible,
+                dockerImage=dockerImage,
+                zones = zones
+        }
     }
-    
+
     output {
-        File outputPaternalGfa = hifiasmStep3.outputPaternalGfa
-        File outputMaternalGfa = hifiasmStep3.outputMaternalGfa
-        File outputPaternalContigGfa = hifiasmStep3.outputPaternalContigGfa
-        File outputMaternalContigGfa = hifiasmStep3.outputMaternalContigGfa
-        File outputRawUnitigGfa = hifiasmStep3.outputRawUnitigGfa
-        File outputBinFiles = hifiasmStep3.outputBinFiles
+        File outputPaternalGfa = select_first([hifiasmStep3.outputPaternalGfa, hifiasmStep4.outputPaternalGfa])
+        File outputMaternalGfa = select_first([hifiasmStep3.outputMaternalGfa, hifiasmStep4.outputMaternalGfa])
+        File outputPaternalContigGfa = select_first([hifiasmStep3.outputPaternalContigGfa, hifiasmStep4.outputPaternalContigGfa])
+        File outputMaternalContigGfa = select_first([hifiasmStep3.outputMaternalContigGfa, hifiasmStep4.outputMaternalContigGfa])
+        File outputRawUnitigGfa = select_first([hifiasmStep3.outputRawUnitigGfa, hifiasmStep4.outputRawUnitigGfa])
+        File outputBinFiles = select_first([hifiasmStep3.outputBinFiles, hifiasmStep4.outputBinFiles])
     }
 }
 
 # hifiasm steps
 # 1st: pass HiFi; no need to pass UL (extraOptions="--bin-only")
 # 2nd: pass UL and both yak files (extraOptions="--bin-only")
-# 3rd: pass UL no need to pass yak files 
+# 3rd: pass UL no need to pass yak files
 task trioHifiasm {
     input{
         File? paternalYak
@@ -175,14 +198,14 @@ task trioHifiasm {
             tar -xzf ~{inputBinFilesTarGz} --strip-components 1
             rm -rf ~{inputBinFilesTarGz} || true
         fi
-        
+
         # make a fake fastq to use for step 2 and 3
         printf "@fake\nA\n+\nI\n" > fake.fq
 
         ## run trio hifiasm https://github.com/chhylp123/hifiasm
         # If ONT ultra long reads are provided
         if [[ -n "~{sep="" childReadsUL}" ]]; then
-            if [[ -n "~{paternalYak}" ]]; then 
+            if [[ -n "~{paternalYak}" ]]; then
                 # Run step 2
                 hifiasm \
                     ~{extraOptions} \
@@ -200,8 +223,8 @@ task trioHifiasm {
                 mv *.ec.bin *.ovlp.reverse.bin *.ovlp.source.bin *.hap1.phase.bin *.hap2.phase.bin *.ul.ovlp.bin kept_bin_files
                 rm -rf *.bin
                 mv kept_bin_files/* .
-                rm -rf kept_bin_files 
-                
+                rm -rf kept_bin_files
+
                 # Run step 3
                 hifiasm \
                     ~{extraOptions} \
@@ -215,16 +238,31 @@ task trioHifiasm {
                     -4 ~{childID}.hap2.phase.bin \
                     fake.fq
             fi
-        else  
-            # Run step 1
-            hifiasm \
-                ~{extraOptions} \
-                -o ~{childID} \
-                -t~{threadCount} \
-                ~{sep=" " childReadsHiFi}
+        else
+            # If no UL reads are provided, run either step 1 (HiFi-only)
+            # or step 4 (yak + dual-scaf; uses bins from step 1).
+            if [[ -n "~{paternalYak}" ]]; then
+                # Run step 4
+                hifiasm \
+                    ~{extraOptions} \
+                    -o ~{childID} \
+                    --hom-cov ~{homCov} \
+                    --dual-scaf \
+                    -t~{threadCount} \
+                    -1 ~{paternalYak} \
+                    -2 ~{maternalYak} \
+                    fake.fq
+            else
+                # Run step 1
+                hifiasm \
+                    ~{extraOptions} \
+                    -o ~{childID} \
+                    -t~{threadCount} \
+                    ~{sep=" " childReadsHiFi}
+            fi
         fi
 
-        #Move bin and gfa files to saparate folders and compress them 
+        #Move bin and gfa files to saparate folders and compress them
         mkdir ~{childID}.raw_unitig_gfa
         mkdir ~{childID}.pat.contig_gfa
         mkdir ~{childID}.mat.contig_gfa
@@ -245,14 +283,14 @@ task trioHifiasm {
         fi
 
         ln *.bin ~{childID}.binFiles
-        
-        
+
+
         # make archives
         tar -cf ~{childID}.raw_unitig_gfa.tar ~{childID}.raw_unitig_gfa
         tar -cf ~{childID}.pat.contig_gfa.tar ~{childID}.pat.contig_gfa
         tar -cf ~{childID}.mat.contig_gfa.tar ~{childID}.mat.contig_gfa
         tar -cf ~{childID}.binFiles.tar ~{childID}.binFiles
-        
+
         # compress
         pigz -p~{threadCount} ~{childID}.raw_unitig_gfa.tar
         pigz -p~{threadCount} ~{childID}.pat.contig_gfa.tar
@@ -279,4 +317,3 @@ task trioHifiasm {
         File outputBinFiles = "~{childID}.binFiles.tar.gz"
     }
 }
-
